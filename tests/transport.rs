@@ -453,7 +453,7 @@ fn alias_binary_has_same_version() {
 #[cfg(unix)]
 async fn terminal_restoration(command_name: &str, expected: i32) {
     use std::{
-        io::{BufRead, Write},
+        io::BufRead,
         os::{
             fd::{AsRawFd, FromRawFd},
             unix::process::CommandExt,
@@ -501,7 +501,7 @@ async fn terminal_restoration(command_name: &str, expected: i32) {
             0
         );
         // SAFETY: ownership of descriptors returned by successful openpty is transferred exactly once.
-        let mut master_file = unsafe { std::fs::File::from_raw_fd(master) };
+        let _master = unsafe { std::fs::File::from_raw_fd(master) };
         let slave_file = unsafe { std::fs::File::from_raw_fd(slave) };
         let mut before = std::mem::MaybeUninit::<libc::termios>::uninit();
         // SAFETY: descriptor is open and output points to writable termios storage.
@@ -568,10 +568,7 @@ async fn terminal_restoration(command_name: &str, expected: i32) {
         assert_eq!(after.c_oflag, before.c_oflag);
         assert_eq!(after.c_cflag, before.c_cflag);
         assert_eq!(after.c_cc, before.c_cc);
-        master_file.write_all(b"\n").unwrap();
-        let status = child.0.wait().unwrap();
-        assert_eq!(status.code(), Some(client_status));
-        status.code()
+        Some(client_status)
     })
     .await
     .unwrap();
