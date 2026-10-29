@@ -177,11 +177,11 @@ try {
         & $Script -Prefix $PathPrefix
         $UserEntries = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' | Where-Object { $_.TrimEnd('\') -ieq $PathBin.TrimEnd('\') })
         Assert-True ($UserEntries.Count -eq 1) 'repeat install persists exactly one user PATH entry'
-        Assert-True ((Get-Command ssh-client -CommandType Application).Source -ieq (Join-Path $PathBin 'ssh-client.exe')) 'current process resolves ssh-client to installation'
-        Assert-True ((Get-Command ssh -CommandType Application).Source -ieq (Join-Path $PathBin 'ssh.exe')) 'current process resolves ssh alias to installation'
+        Assert-True ((Get-Command ssh-client -CommandType Application | Select-Object -First 1).Source -ieq (Join-Path $PathBin 'ssh-client.exe')) 'current process resolves ssh-client to installation'
+        Assert-True ((Get-Command ssh -CommandType Application | Select-Object -First 1).Source -ieq (Join-Path $PathBin 'ssh.exe')) 'current process resolves ssh alias to installation'
         $Installed = Invoke-FreshPathProcess -ExpectedBin $PathBin -Program @'
 $ErrorActionPreference = 'Stop'
-$Client = (Get-Command ssh-client -CommandType Application).Source
+$Client = (Get-Command ssh-client -CommandType Application | Select-Object -First 1).Source
 $Aliases = @(Get-Command ssh -All -CommandType Application | ForEach-Object { $_.Source })
 $Version = & ssh-client --version
 if ($LASTEXITCODE -ne 0) { throw 'ssh-client --version failed' }

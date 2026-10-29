@@ -12,6 +12,10 @@ use std::{
     },
     time::Duration,
 };
+#[cfg(all(unix, target_vendor = "apple"))]
+const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY as libc::c_ulong;
+#[cfg(all(unix, not(target_vendor = "apple")))]
+const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY;
 #[derive(Clone)]
 struct Fixture {
     key: PublicKey,
@@ -470,8 +474,8 @@ async fn terminal_restoration(command_name: &str, expected: i32) {
                     &mut master,
                     &mut slave,
                     std::ptr::null_mut(),
-                    std::ptr::null(),
-                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
                 )
             },
             0
@@ -496,7 +500,7 @@ async fn terminal_restoration(command_name: &str, expected: i32) {
                 if libc::setsid() < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
-                if libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
+                if libc::ioctl(0, TIOCSCTTY_REQUEST, 0) < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
                 Ok(())
@@ -590,8 +594,8 @@ async fn prompt_authentication(encrypted_key: bool, credential: &str, expected: 
                     &mut master,
                     &mut slave,
                     std::ptr::null_mut(),
-                    std::ptr::null(),
-                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
                 )
             },
             0
@@ -608,7 +612,7 @@ async fn prompt_authentication(encrypted_key: bool, credential: &str, expected: 
                 if libc::setsid() < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
-                if libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
+                if libc::ioctl(0, TIOCSCTTY_REQUEST, 0) < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
                 Ok(())

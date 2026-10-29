@@ -1,7 +1,7 @@
 # Validation record
 
 Local verification includes Linux x86_64 on 2026-10-28 UTC and Windows x86_64
-on 2026-10-29 UTC. The Linux run preceded a Windows-only test import fix;
+on 2026-10-29 UTC. The Linux run preceded later cross-platform test portability fixes;
 check the hosted CI for the final source across all six platforms.
 
 ## Linux x86_64 — original source archive
