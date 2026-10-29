@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -103,13 +104,22 @@ class OpenSshTests(unittest.TestCase):
         import pty
         import termios
         master, slave = pty.openpty()
-        original = termios.tcgetattr(slave)
+        def terminal_state():
+            if sys.platform == 'darwin':
+                import fcntl
+                import struct
+                # Darwin marks pending input when canonical mode is restored.
+                # FIONREAD lets the kernel process that transient state without
+                # consuming input, so all terminal attributes can be compared.
+                fcntl.ioctl(slave, termios.FIONREAD, struct.pack('i', 0))
+            return termios.tcgetattr(slave)
+        original = terminal_state()
         try:
             process = subprocess.Popen([str(BINARY), '-B', '-n', '-t', '-p', str(self.port), '-i', str(self.root / 'identity'), '--known-hosts', str(self.root / 'hosts'), f'{self.user}@127.0.0.1', 'printf terminal-ok'], stdin=slave, stdout=slave, stderr=subprocess.PIPE)
             _, error = process.communicate(timeout=15)
             # Terminal attributes must restore even if the unprivileged OpenSSH
             # fixture aborts its PTY session (e.g. cannot write system login records).
-            self.assertEqual(termios.tcgetattr(slave), original)
+            self.assertEqual(terminal_state(), original)
             if process.returncode != 0:
                 self.assertIn(b'login records by non-root user', (self.root / 'log').read_bytes(), error)
         finally:
