@@ -452,19 +452,39 @@ fn alias_binary_has_same_version() {
 
 #[cfg(unix)]
 async fn terminal_restoration(command_name: &str, expected: i32) {
-    use std::os::{
-        fd::{AsRawFd, FromRawFd},
-        unix::process::CommandExt,
+    use std::{
+        io::{BufRead, Write},
+        os::{
+            fd::{AsRawFd, FromRawFd},
+            unix::process::CommandExt,
+        },
     };
     let h = Harness::new().await;
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ssh-client"));
+    // Keep the controlling-session leader alive after the client exits. Darwin
+    // revokes the PTY when that leader exits, which prevents inspecting the
+    // restored terminal attributes from the parent.
+    let mut command = Command::new("/bin/sh");
     command
+        .arg("-c")
+        .arg(r#""$@" >/dev/null 2>&1; result=$?; printf '%s\n' "$result"; IFS= read -r _; exit "$result""#)
+        .arg("ssh-client-pty-test")
+        .arg(env!("CARGO_BIN_EXE_ssh-client"))
         .args(["-B", "-t", "-p", &h.port.to_string(), "-i"])
         .arg(&h.key)
         .arg("--known-hosts")
         .arg(&h.hosts)
         .args(["test@127.0.0.1", command_name]);
     let result = tokio::task::spawn_blocking(move || {
+        struct ChildGuard(std::process::Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                if matches!(self.0.try_wait(), Ok(None)) {
+                    let _ = self.0.kill();
+                }
+                let _ = self.0.wait();
+            }
+        }
+
         let mut master = -1;
         let mut slave = -1;
         // SAFETY: valid output pointers; openpty initializes distinct owned file descriptors.
@@ -481,7 +501,7 @@ async fn terminal_restoration(command_name: &str, expected: i32) {
             0
         );
         // SAFETY: ownership of descriptors returned by successful openpty is transferred exactly once.
-        let _master = unsafe { std::fs::File::from_raw_fd(master) };
+        let mut master_file = unsafe { std::fs::File::from_raw_fd(master) };
         let slave_file = unsafe { std::fs::File::from_raw_fd(slave) };
         let mut before = std::mem::MaybeUninit::<libc::termios>::uninit();
         // SAFETY: descriptor is open and output points to writable termios storage.
@@ -492,7 +512,7 @@ async fn terminal_restoration(command_name: &str, expected: i32) {
         let before = unsafe { before.assume_init() };
         command
             .stdin(Stdio::from(slave_file.try_clone().unwrap()))
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null());
         // SAFETY: only async-signal-safe libc calls in the fork child; stdin is already the PTY slave.
         unsafe {
@@ -506,25 +526,39 @@ async fn terminal_restoration(command_name: &str, expected: i32) {
                 Ok(())
             });
         }
-        let mut child = command.spawn().unwrap();
+        let mut child = ChildGuard(command.spawn().unwrap());
+        let stdout = child.0.stdout.take().unwrap();
+        let reader = std::thread::spawn(move || {
+            let mut line = String::new();
+            let bytes = std::io::BufReader::new(stdout)
+                .read_line(&mut line)
+                .unwrap();
+            assert_ne!(
+                bytes, 0,
+                "PTY wrapper exited before reporting the client status"
+            );
+            line.trim().parse::<i32>().unwrap()
+        });
         let start = std::time::Instant::now();
         let mut saw_raw = false;
-        let status = loop {
+        loop {
             let mut attr = std::mem::MaybeUninit::<libc::termios>::uninit();
             if unsafe { libc::tcgetattr(slave, attr.as_mut_ptr()) } == 0 {
                 let attr = unsafe { attr.assume_init() };
                 saw_raw |= attr.c_lflag & libc::ICANON == 0;
             }
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
+            if reader.is_finished() {
+                break;
+            }
+            if let Some(status) = child.0.try_wait().unwrap() {
+                panic!("PTY wrapper exited before reporting client status: {status}");
             }
             if start.elapsed() > Duration::from_secs(5) {
-                child.kill().unwrap();
-                let _ = child.wait();
                 panic!("PTY client hung");
             }
             std::thread::sleep(Duration::from_millis(5));
-        };
+        }
+        let client_status = reader.join().unwrap();
         let mut after = std::mem::MaybeUninit::<libc::termios>::uninit();
         assert_eq!(unsafe { libc::tcgetattr(slave, after.as_mut_ptr()) }, 0);
         let after = unsafe { after.assume_init() };
@@ -534,12 +568,16 @@ async fn terminal_restoration(command_name: &str, expected: i32) {
         assert_eq!(after.c_oflag, before.c_oflag);
         assert_eq!(after.c_cflag, before.c_cflag);
         assert_eq!(after.c_cc, before.c_cc);
+        master_file.write_all(b"\n").unwrap();
+        let status = child.0.wait().unwrap();
+        assert_eq!(status.code(), Some(client_status));
         status.code()
     })
     .await
     .unwrap();
     assert_eq!(result, Some(expected));
 }
+
 #[cfg(unix)]
 #[tokio::test]
 async fn raw_terminal_restored_after_success() {
